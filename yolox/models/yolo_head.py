@@ -485,14 +485,14 @@ class YOLOXHead(nn.Module):
         if mode == "cpu":
             cls_preds_, obj_preds_ = cls_preds_.cpu(), obj_preds_.cpu()
 
-        with torch.cuda.amp.autocast(enabled=False):
-            cls_preds_ = (
-                cls_preds_.float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
-                * obj_preds_.float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
-            )
-            pair_wise_cls_loss = F.binary_cross_entropy(
-                cls_preds_.sqrt_(), gt_cls_per_image, reduction="none"
-            ).sum(-1)
+        # with torch.cuda.amp.autocast(enabled=False):
+        cls_preds_ = (
+            cls_preds_.float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
+            * obj_preds_.float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_()
+        )
+        pair_wise_cls_loss = F.binary_cross_entropy(
+            cls_preds_.sqrt_(), gt_cls_per_image, reduction="none"
+        ).sum(-1)
         del cls_preds_
 
         cost = (
@@ -510,10 +510,10 @@ class YOLOXHead(nn.Module):
         del pair_wise_cls_loss, cost, pair_wise_ious, pair_wise_ious_loss
 
         if mode == "cpu":
-            gt_matched_classes = gt_matched_classes.cuda()
-            fg_mask = fg_mask.cuda()
-            pred_ious_this_matching = pred_ious_this_matching.cuda()
-            matched_gt_inds = matched_gt_inds.cuda()
+            gt_matched_classes = gt_matched_classes.cpu()
+            fg_mask = fg_mask.cpu()
+            pred_ious_this_matching = pred_ious_this_matching.cpu()
+            matched_gt_inds = matched_gt_inds.cpu()
 
         return (
             gt_matched_classes,

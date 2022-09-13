@@ -11,7 +11,6 @@ import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 
-from yolox.data import DataPrefetcher
 from yolox.exp import Exp
 from yolox.utils import (
     MeterBuffer,
@@ -32,9 +31,18 @@ from yolox.utils import (
     synchronize
 )
 
+from bigdl.nano.pytorch import TorchNano
 
-class Trainer:
+
+class Trainer(TorchNano):
     def __init__(self, exp: Exp, args):
+        # import pdb; pdb.set_trace()
+        try:
+            precision = int(args.precision)
+        except:
+            precision = args.precision
+        super().__init__(use_ipex=args.use_ipex, precision=precision,
+                         num_processes=args.num_processes, strategy=args.strategy)
         # init function only defines some basic attr, other attrs like model, optimizer are built in
         # before_train methods.
         self.exp = exp
@@ -43,11 +51,12 @@ class Trainer:
         # training related attr
         self.max_epoch = exp.max_epoch
         self.amp_training = args.fp16
-        self.scaler = torch.cuda.amp.GradScaler(enabled=args.fp16)
-        self.is_distributed = get_world_size() > 1
-        self.rank = get_rank()
-        self.local_rank = get_local_rank()
-        self.device = "cuda:{}".format(self.local_rank)
+        # self.scaler = torch.cuda.amp.GradScaler(enabled=args.fp16)
+        self.is_distributed = self.world_size > 1
+        # self.rank = self.global_rank
+        # self.local_rank = self.local_rank
+        # self.device = torch.device("cuda:{}".format(self.local_rank) if torch.cuda.is_available() else "cpu")
+        # self.device = "cpu"
         self.use_model_ema = exp.ema
         self.save_history_ckpt = exp.save_history_ckpt
 
@@ -57,15 +66,17 @@ class Trainer:
         self.best_ap = 0
 
         # metric record
-        self.meter = MeterBuffer(window_size=exp.print_interval)
+        self.meter = MeterBuffer(window_size=self.exp.print_interval)
         self.file_name = os.path.join(exp.output_dir, args.experiment_name)
 
-        if self.rank == 0:
+        self.nan = False
+
+        if self.is_global_zero:
             os.makedirs(self.file_name, exist_ok=True)
 
         setup_logger(
             self.file_name,
-            distributed_rank=self.rank,
+            distributed_rank=self.global_rank,
             filename="train_log.txt",
             mode="a",
         )
@@ -89,27 +100,41 @@ class Trainer:
         for self.iter in range(self.max_iter):
             self.before_iter()
             self.train_one_iter()
+            # if self.nan:
+                # self.nan = False
+                # continue
             self.after_iter()
 
     def train_one_iter(self):
         iter_start_time = time.time()
 
-        inps, targets = self.prefetcher.next()
-        inps = inps.to(self.data_type)
-        targets = targets.to(self.data_type)
+        # import pdb; pdb.set_trace()
+        dataiter = iter(self.train_loader)
+        inps, targets, *_ = next(dataiter)
+        # inps, targets = self.prefetcher.next()
+        # inps = inps.to(self.data_type)
+        # targets = targets.to(self.data_type)
         targets.requires_grad = False
         inps, targets = self.exp.preprocess(inps, targets, self.input_size)
         data_end_time = time.time()
 
-        with torch.cuda.amp.autocast(enabled=self.amp_training):
-            outputs = self.model(inps, targets)
+        # with torch.cuda.amp.autocast(enabled=self.amp_training):
+        outputs = self.model(inps, targets)
 
+        # if type(outputs) is bool:
+            # print("skip data gives 'nan' outputs")
+            # self.nan = True
+            # return
         loss = outputs["total_loss"]
 
         self.optimizer.zero_grad()
-        self.scaler.scale(loss).backward()
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
+        # self.scaler.scale(loss).backward()
+        # self.scaler.step(self.optimizer)
+        # self.scaler.update()
+
+        # loss.backward()
+        self.backward(loss)
+        self.optimizer.step()
 
         if self.use_model_ema:
             self.ema_model.update(self.model)
@@ -131,52 +156,52 @@ class Trainer:
         logger.info("exp value:\n{}".format(self.exp))
 
         # model related init
-        torch.cuda.set_device(self.local_rank)
+        # torch.cuda.set_device(self.local_rank)
         model = self.exp.get_model()
         logger.info(
             "Model Summary: {}".format(get_model_info(model, self.exp.test_size))
         )
-        model.to(self.device)
+        # model.to(self.device)
 
         # solver related init
-        self.optimizer = self.exp.get_optimizer(self.args.batch_size)
+        optimizer = self.exp.get_optimizer(self.args.batch_size)
 
         # value of epoch will be set in `resume_train`
         model = self.resume_train(model)
 
         # data related init
         self.no_aug = self.start_epoch >= self.max_epoch - self.exp.no_aug_epochs
-        self.train_loader = self.exp.get_data_loader(
+        train_loader = self.exp.get_data_loader(
             batch_size=self.args.batch_size,
             is_distributed=self.is_distributed,
             no_aug=self.no_aug,
             cache_img=self.args.cache,
         )
-        logger.info("init prefetcher, this might take one minute or less...")
-        self.prefetcher = DataPrefetcher(self.train_loader)
+        # logger.info("init prefetcher, this might take one minute or less...")
+        # self.prefetcher = DataPrefetcher(self.train_loader)
         # max_iter means iters per epoch
-        self.max_iter = len(self.train_loader)
+        self.max_iter = len(train_loader)
 
         self.lr_scheduler = self.exp.get_lr_scheduler(
             self.exp.basic_lr_per_img * self.args.batch_size, self.max_iter
         )
-        if self.args.occupy:
-            occupy_mem(self.local_rank)
+        # if self.args.occupy:
+        #     occupy_mem(self.local_rank)
 
-        if self.is_distributed:
-            model = DDP(model, device_ids=[self.local_rank], broadcast_buffers=False)
+        # if self.is_distributed:
+        #     model = DDP(model, device_ids=[self.local_rank], broadcast_buffers=False)
+
+        self.model, self.optimizer, self.train_loader = self.setup(model, optimizer, train_loader)
 
         if self.use_model_ema:
-            self.ema_model = ModelEMA(model, 0.9998)
+            self.ema_model = ModelEMA(self.model, 0.9998)
             self.ema_model.updates = self.max_iter * self.start_epoch
-
-        self.model = model
 
         self.evaluator = self.exp.get_evaluator(
             batch_size=self.args.batch_size, is_distributed=self.is_distributed
         )
         # Tensorboard and Wandb loggers
-        if self.rank == 0:
+        if self.global_rank == 0:
             if self.args.logger == "tensorboard":
                 self.tblogger = SummaryWriter(os.path.join(self.file_name, "tensorboard"))
             elif self.args.logger == "wandb":
@@ -189,13 +214,13 @@ class Trainer:
                 raise ValueError("logger must be either 'tensorboard' or 'wandb'")
 
         logger.info("Training start...")
-        logger.info("\n{}".format(model))
+        logger.info("\n{}".format(self.model))
 
     def after_train(self):
         logger.info(
             "Training of experiment is done and the best AP is {:.2f}".format(self.best_ap * 100)
         )
-        if self.rank == 0:
+        if self.global_rank == 0:
             if self.args.logger == "wandb":
                 self.wandb_logger.finish()
 
@@ -204,10 +229,10 @@ class Trainer:
 
         if self.epoch + 1 == self.max_epoch - self.exp.no_aug_epochs or self.no_aug:
             logger.info("--->No mosaic aug now!")
-            self.train_loader.close_mosaic()
+            self.train_loader._dataloader.close_mosaic()
             logger.info("--->Add additional L1 loss now!")
             if self.is_distributed:
-                self.model.module.head.use_l1 = True
+                self.model._module.module.head.use_l1 = True
             else:
                 self.model.head.use_l1 = True
             self.exp.eval_interval = 1
@@ -218,7 +243,9 @@ class Trainer:
         self.save_ckpt(ckpt_name="latest")
 
         if (self.epoch + 1) % self.exp.eval_interval == 0:
-            all_reduce_norm(self.model)
+            # _IPEXConvNd does not support _load_from_state_dict method
+            if not self.use_ipex:
+                all_reduce_norm(self.model)
             self.evaluate_and_save_model()
 
     def before_iter(self):
@@ -261,7 +288,7 @@ class Trainer:
                 + (", size: {:d}, {}".format(self.input_size[0], eta_str))
             )
 
-            if self.rank == 0:
+            if self.global_rank == 0:
                 if self.args.logger == "wandb":
                     metrics = {"train/" + k: v.latest for k, v in loss_meter.items()}
                     metrics.update({
@@ -274,7 +301,7 @@ class Trainer:
         # random resizing
         if (self.progress_in_iter + 1) % 10 == 0:
             self.input_size = self.exp.random_resize(
-                self.train_loader, self.epoch, self.rank, self.is_distributed
+                self.train_loader, self.epoch, self.global_rank, self.is_distributed
             )
 
     @property
@@ -332,7 +359,7 @@ class Trainer:
         update_best_ckpt = ap50_95 > self.best_ap
         self.best_ap = max(self.best_ap, ap50_95)
 
-        if self.rank == 0:
+        if self.global_rank == 0:
             if self.args.logger == "tensorboard":
                 self.tblogger.add_scalar("val/COCOAP50", ap50, self.epoch + 1)
                 self.tblogger.add_scalar("val/COCOAP50_95", ap50_95, self.epoch + 1)
@@ -351,7 +378,7 @@ class Trainer:
             self.save_ckpt(f"epoch_{self.epoch + 1}", ap=ap50_95)
 
     def save_ckpt(self, ckpt_name, update_best_ckpt=False, ap=None):
-        if self.rank == 0:
+        if self.global_rank == 0:
             save_model = self.ema_model.ema if self.use_model_ema else self.model
             logger.info("Save weights to {}".format(self.file_name))
             ckpt_state = {
