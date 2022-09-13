@@ -35,10 +35,17 @@ def make_parser():
     )
     parser.add_argument("-b", "--batch-size", type=int, default=64, help="batch size")
     parser.add_argument(
-        "--use_ipex", type=bool, default=False, help="whether use ipex acceleration"
+        "--use_ipex",
+        dest="use_ipex",
+        default=False,
+        action="store_true",
+        help="whether use ipex acceleration"
     )
     parser.add_argument(
-        "--precision", type=str, default="32"
+        "--precision",
+        type=str,
+        default="32",
+        help="Mixed precision for training"
     )
     parser.add_argument(
         "-d", "--devices", default=None, type=int, help="device for training"
