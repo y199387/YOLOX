@@ -133,16 +133,16 @@ class Trainer(TorchNano):
         logger.info("exp value:\n{}".format(self.exp))
 
         # model related init
-        model = self.exp.get_model()
+        self.model = self.exp.get_model()
         logger.info(
-            "Model Summary: {}".format(get_model_info(model, self.exp.test_size))
+            "Model Summary: {}".format(get_model_info(self.model, self.exp.test_size))
         )
 
         # solver related init
-        optimizer = self.exp.get_optimizer(self.args.batch_size)
+        self.optimizer = self.exp.get_optimizer(self.args.batch_size)
 
         # value of epoch will be set in `resume_train`
-        model = self.resume_train(model)
+        self.model = self.resume_train(self.model)
 
         # data related init
         self.no_aug = self.start_epoch >= self.max_epoch - self.exp.no_aug_epochs
@@ -158,7 +158,7 @@ class Trainer(TorchNano):
             self.exp.basic_lr_per_img * self.args.batch_size, self.max_iter
         )
 
-        self.model, self.optimizer, self.train_loader = self.setup(model, optimizer, train_loader)
+        self.model, self.optimizer, self.train_loader = self.setup(self.model, self.optimizer, train_loader)
 
         if self.use_model_ema:
             self.ema_model = ModelEMA(self.model, 0.9998)
@@ -346,7 +346,7 @@ class Trainer(TorchNano):
 
     def save_ckpt(self, ckpt_name, update_best_ckpt=False, ap=None):
         if self.global_rank == 0:
-            save_model = self.ema_model.ema if self.use_model_ema else self.model
+            save_model = self.ema_model.ema if self.use_model_ema else self.model.module
             logger.info("Save weights to {}".format(self.file_name))
             ckpt_state = {
                 "start_epoch": self.epoch + 1,
