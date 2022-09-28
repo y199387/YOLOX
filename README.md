@@ -5,10 +5,12 @@ This floder showcases how to use BigDL Nano to accelerate [YOLOX](https://github
 ## Prepare the environment
 We recommend you to use [Anaconda](https://www.anaconda.com/distribution/#linux) to prepare the environments.
 ```bash
+git clone https://github.com/y199387/YOLOX.git
 conda create -n bigdl python==3.7.10 setuptools==58.0.4
 conda activate bigdl
 pip install --pre --upgrade bigdl-nano[pytorch]
 source bigdl-nano-init
+cd YOLOX
 pip install -v -e .
 ```
 
