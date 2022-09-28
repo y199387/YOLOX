@@ -114,7 +114,7 @@ class Trainer(TorchNano):
         self.optimizer.step()
 
         if self.use_model_ema:
-            self.ema_model.update(self.model)
+            self.ema_model.update(self.model.module)
 
         lr = self.lr_scheduler.update_lr(self.progress_in_iter + 1)
         for param_group in self.optimizer.param_groups:
@@ -161,7 +161,7 @@ class Trainer(TorchNano):
         self.model, self.optimizer, self.train_loader = self.setup(self.model, self.optimizer, train_loader)
 
         if self.use_model_ema:
-            self.ema_model = ModelEMA(self.model, 0.9998)
+            self.ema_model = ModelEMA(self.model.module, 0.9998)
             self.ema_model.updates = self.max_iter * self.start_epoch
 
         self.evaluator = self.exp.get_evaluator(
@@ -212,7 +212,7 @@ class Trainer(TorchNano):
         if (self.epoch + 1) % self.exp.eval_interval == 0:
             # _IPEXConvNd does not support _load_from_state_dict method
             if not self.use_ipex:
-                all_reduce_norm(self.model)
+                all_reduce_norm(self.model.module)
             self.evaluate_and_save_model()
 
     def before_iter(self):

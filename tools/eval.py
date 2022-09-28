@@ -153,8 +153,6 @@ def main(exp, args, num_gpu):
     evaluator.per_class_AP = True
     evaluator.per_class_AR = True
 
-    torch.cuda.set_device(rank)
-    model.cuda(rank)
     model.eval()
 
     if not args.speed and not args.trt:
@@ -163,8 +161,7 @@ def main(exp, args, num_gpu):
         else:
             ckpt_file = args.ckpt
         logger.info("loading checkpoint from {}".format(ckpt_file))
-        loc = "cuda:{}".format(rank)
-        ckpt = torch.load(ckpt_file, map_location=loc)
+        ckpt = torch.load(ckpt_file, map_location="cpu")
         model.load_state_dict(ckpt["model"])
         logger.info("loaded checkpoint done.")
 
@@ -205,8 +202,7 @@ if __name__ == "__main__":
     if not args.experiment_name:
         args.experiment_name = exp.exp_name
 
-    num_gpu = torch.cuda.device_count() if args.devices is None else args.devices
-    assert num_gpu <= torch.cuda.device_count()
+    num_gpu = 0
 
     dist_url = "auto" if args.dist_url is None else args.dist_url
     launch(

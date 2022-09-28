@@ -16,7 +16,7 @@ def is_parallel(model):
         nn.parallel.DataParallel,
         nn.parallel.DistributedDataParallel,
     )
-    return isinstance(model._module, parallel_type)
+    return isinstance(model.module, parallel_type)
 
 
 class ModelEMA:
@@ -51,7 +51,6 @@ class ModelEMA:
             self.updates += 1
             d = self.decay(self.updates)
 
-            # import pdb; pdb.set_trace()
             msd = (
                 model.module.state_dict() if is_parallel(model) else model.state_dict()
             )  # model state_dict

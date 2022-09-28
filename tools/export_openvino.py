@@ -8,10 +8,8 @@ from torch import nn
 from torch.utils.data import TensorDataset, DataLoader
 
 from yolox.exp import get_exp
-from yolox.models.network_blocks import SiLU
-from yolox.utils import replace_module
 
-from yolox.utils import YoloxInferenceOptimizer
+from bigdl.nano.pytorch import InferenceOptimizer
 
 def make_parser():
     parser = argparse.ArgumentParser("YOLOX onnx deploy")
@@ -59,30 +57,38 @@ def main():
     else:
         ckpt_file = args.ckpt
     # load the model state dict
-    
     ckpt = torch.load(ckpt_file, map_location=torch.device('cpu'))
     model.load_state_dict(ckpt["model"])
     logger.info("loading checkpoint done.")
 
-    dummy_input = torch.randn(args.batch_size, 3, exp.test_size[0], exp.test_size[1], requires_grad=False)
-    preds = model(dummy_input).detach()
-    train_set = TensorDataset(dummy_input, preds)
-    train_loader = DataLoader(train_set, batch_size=args.batch_size)
-    # train_loader = exp.get_data_loader(args.batch_size, False)
+    input_sample = torch.randn(args.batch_size, 3, exp.test_size[0], exp.test_size[1])
 
-    def accuracy(model):
-        coco_evaluator = exp.get_evaluator(args.batch_size, False)
-        coco_evaluator.per_class_AP = True
-        coco_evaluator.per_class_AR = True
+    accelerated_models = []
 
-        ap50_95, ap50, _ = coco_evaluator.evaluate(model, False)
-        return ap50
+    # onnx_model = InferenceOptimizer.trace(model,
+    #                                       input_sample=input_sample,
+    #                                       accelerator="onnxruntime")
+
+    # ipex_model = InferenceOptimizer.trace(model,
+    #                                       input_sample=input_sample,
+    #                                       accelerator="jit",
+    #                                       use_ipex=True)
+
+    openvino_model = InferenceOptimizer.trace(model,
+                                              input_sample=input_sample,
+                                              accelerator="openvino")
+
+    
 
 
+    coco_evaluator = exp.get_evaluator(args.batch_size, False)
+    coco_evaluator.per_class_AP = True
+    coco_evaluator.per_class_AR = True
 
-    inference_optimizer = YoloxInferenceOptimizer()
-    inference_optimizer.optimize(model, metric=accuracy ,training_data=train_loader)
-    inference_optimizer.summary()
+    *_, summary = coco_evaluator.evaluate(openvino_model, False)
+    import pdb; pdb.set_trace()
+    logger.info("\n" + "accelerated model results")
+    logger.info("\n" + summary)
 
 if __name__ == "__main__":
     main()
