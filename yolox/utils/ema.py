@@ -16,7 +16,7 @@ def is_parallel(model):
         nn.parallel.DataParallel,
         nn.parallel.DistributedDataParallel,
     )
-    return isinstance(model.module, parallel_type)
+    return isinstance(model, parallel_type)
 
 
 class ModelEMA:
